@@ -39,7 +39,7 @@ public class Server {
             final var requestLine = in.readLine();
             final var parts = requestLine.split(" ");
             if (parts.length != 3) {
-                socket.close();
+                return;
             }
 
             final var path = parts[1];
@@ -63,7 +63,6 @@ public class Server {
                         "\r\n"
                 ).getBytes());
                 out.flush();
-                socket.close();
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -82,7 +81,6 @@ public class Server {
                 ).getBytes());
                 Files.copy(filePath, out);
                 out.flush();
-                socket.close();
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -94,6 +92,7 @@ public class Server {
         try {
             serverSocket = new ServerSocket(port);
             while (true) {
+                //метод get() из интерфейса Future
                 threadPool.submit(this::handle).get();
             }
         } catch (IOException | InterruptedException | ExecutionException e) {
