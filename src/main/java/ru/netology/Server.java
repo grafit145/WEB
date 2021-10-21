@@ -6,97 +6,90 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class Server {
-    private ServerSocket serverSocket;
-    private List<Socket> clientsSockets;
-    private List<String> validPath = new ArrayList<>();
-    private final static int poolSize = 64;
-    private final ExecutorService threadPool = Executors.newFixedThreadPool(poolSize);
+    private final List<String> validPaths = List.of("/index.html", "/spring.svg", "/spring.png",
+            "/resources.html", "/styles.css", "/app.js", "/links.html", "/forms.html",
+            "/classic.html", "/events.html", "/events.js");
+    private final ExecutorService executorService;
 
-    public Server() {
-        System.out.println("Server started!");
-        validPath.add("/classic.html");
+    public Server(int poolsize) {
+        executorService = Executors.newFixedThreadPool(poolsize);
     }
 
-    public List<String> getValidPath() {
-        return validPath;
+    public void listen(int port) {
+
+        try (final var serverSocket = new ServerSocket(port)) {
+            while (true) {
+                final var socket = serverSocket.accept();
+                executorService.submit(() -> handleConnection(socket));
+
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
-    public void setValidPath(List<String> validPath) {
-        this.validPath = validPath;
-    }
+    public void handleConnection(Socket socket) {
+        try (
+                socket;
+                final var in = socket.getInputStream();
+                final var out = new BufferedOutputStream(socket.getOutputStream());
+        ) {
+            // read only request line for simplicity
+            // must be in form GET /path HTTP/1.1
+            var request = Request.fromInputStream(in);
 
-    private void handle() {
-        try (var socket = serverSocket.accept();
-             final var in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-             final var out = new BufferedOutputStream(socket.getOutputStream())) {
-            final var requestLine = in.readLine();
-            final var parts = requestLine.split(" ");
-            if (parts.length != 3) {
+            final var path = request.getPath();
+            if (!validPaths.contains(path)) {
+                out.write((
+                        "HTTP/1.1 404 Not Found\r\n" +
+                                "Content-Length: 0\r\n" +
+                                "Connection: close\r\n" +
+                                "\r\n"
+                ).getBytes());
+                out.flush();
                 return;
             }
 
-            final var path = parts[1];
-            checkValidPath(parts[1], socket, out);
-
             final var filePath = Path.of(".", "public", path);
             final var mimeType = Files.probeContentType(filePath);
-            readFile(path, filePath, mimeType, socket, out);
 
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private void checkValidPath(String path, Socket socket, BufferedOutputStream out) {
-        try {
-            if (!validPath.contains(path)) {
-                out.write(("HTTP/1.1 404Not Found\r\n" +
-                        "Content-Length: 0\r\n" +
-                        "Connection: close\r\n" +
-                        "\r\n"
-                ).getBytes());
-                out.flush();
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private void readFile(String path, Path filePath, String mimeType, Socket socket, BufferedOutputStream out) {
-        try {
+            // special case for classic
             if (path.equals("/classic.html")) {
-                final var length = Files.size(filePath);
-                out.write(("HTTP/1.1 200 OK\r\n" +
-                        "Content-Type: " + mimeType + "\r\n" +
-                        "Content-Length: " + length + "\r\n" +
-                        "Connection: close\r\n" +
-                        "\r\n"
+
+                final var template = Files.readString(filePath);
+                final var content = template.replace(
+                        "{time}",
+                        LocalDateTime.now().toString()
+                ).getBytes();
+                out.write((
+                        "HTTP/1.1 200 OK\r\n" +
+                                "Content-Type: " + mimeType + "\r\n" +
+                                "Content-Length: " + content.length + "\r\n" +
+                                "Connection: close\r\n" +
+                                "\r\n"
                 ).getBytes());
-                Files.copy(filePath, out);
+                out.write(content);
                 out.flush();
+                return;
             }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
 
-
-    public void listen(int port) {
-        try {
-            serverSocket = new ServerSocket(port);
-            while (true) {
-                //метод get() из интерфейса Future
-                threadPool.submit(this::handle).get();
-            }
-        } catch (IOException | InterruptedException | ExecutionException e) {
-            e.printStackTrace();
+            final var length = Files.size(filePath);
+            out.write((
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Content-Type: " + mimeType + "\r\n" +
+                            "Content-Length: " + length + "\r\n" +
+                            "Connection: close\r\n" +
+                            "\r\n"
+            ).getBytes());
+            Files.copy(filePath, out);
+            out.flush();
+        } catch (IOException ex) {
+            ex.printStackTrace();
         }
     }
 }
